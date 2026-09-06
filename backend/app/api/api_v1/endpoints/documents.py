@@ -276,6 +276,23 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
                 is_verified=False
             )
             db.add(land_rec)
+        else:
+            land_rec.owner_name = owner_name
+            land_rec.survey_number = survey_number
+            land_rec.khasra_number = extracted_fields.get("khasra_number", {}).get("value")
+            land_rec.khata_number = extracted_fields.get("khata_number", {}).get("value")
+            land_rec.plot_area = extracted_fields.get("plot_area", {}).get("value")
+            land_rec.area_unit = extracted_fields.get("area_unit", {}).get("value") or "Acres"
+            land_rec.district_name = district_name
+            land_rec.tehsil_name = extracted_fields.get("tehsil", {}).get("value")
+            land_rec.village_name = village_name
+            land_rec.land_classification = extracted_fields.get("land_classification", {}).get("value")
+            land_rec.ownership_details = extracted_fields.get("ownership_details", {}).get("value")
+            land_rec.mutation_number = extracted_fields.get("mutation_number", {}).get("value")
+            land_rec.registration_number = extracted_fields.get("registration_number", {}).get("value")
+            land_rec.confidence_score = overall_conf
+            land_rec.confidence_level = conf_level
+            land_rec.validation_status = val_status
 
         # Stage 7: Completed
         doc.status = DocStatusEnum.COMPLETED.value
