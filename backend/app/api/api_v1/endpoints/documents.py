@@ -27,6 +27,7 @@ from app.services.audit_service import AuditService
 router = APIRouter()
 
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
+ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/pjpeg", "application/pdf", "application/octet-stream"}
 MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
 
 @router.post("/upload", response_model=DocumentResponse)
@@ -41,7 +42,13 @@ async def upload_document(
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Unsupported file type '{ext}'. Allowed: PDF, PNG, JPG, JPEG")
 
+    if file.content_type and file.content_type.lower() not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported content type '{file.content_type}'. Allowed: image/png, image/jpeg, application/pdf")
+
     contents = await file.read()
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty (0 bytes).")
+
     if len(contents) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File size exceeds maximum allowed limit of 15 MB")
 
@@ -57,6 +64,17 @@ async def upload_document(
 
     unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
     rel_path, abs_path = StorageService.save_original(contents, unique_filename)
+
+    # Validate image/PDF integrity immediately after saving
+    try:
+        PreprocessingService.validate_file_integrity(abs_path, ext[1:])
+    except ValueError:
+        if os.path.exists(abs_path):
+            try:
+                os.remove(abs_path)
+            except Exception:
+                pass
+        raise HTTPException(status_code=400, detail="Uploaded document is corrupted or invalid and cannot be processed.")
 
     document = Document(
         filename=unique_filename,
@@ -109,14 +127,41 @@ def get_document(id: int, db: Session = Depends(get_db), current_user: User = De
 
 @router.post("/{id}/process")
 def process_document(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    print(f"PROCESS ROUTE START")
-    print(f"DOCUMENT ID: {id}")
-    print(f"USER: {current_user.email if current_user else 'Unknown'}")
-    print(f"PROCESSING STARTED")
+    print("[PROCESS] ROUTE START")
+    print(f"[PROCESS] DOCUMENT ID: {id}")
 
     doc = db.query(Document).filter(Document.id == id).first()
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        print(f"[PROCESS] DOCUMENT NOT FOUND: {id}")
+        raise HTTPException(status_code=404, detail=f"Document #{id} not found")
+
+    file_exists = os.path.exists(doc.file_path) if doc.file_path else False
+    file_size = os.path.getsize(doc.file_path) if file_exists else 0
+    print(f"[PROCESS] FILE EXISTS: {file_exists}")
+    print(f"[PROCESS] FILE TYPE: {doc.file_type}")
+    print(f"[PROCESS] FILE SIZE: {file_size}")
+
+    if not file_exists or file_size == 0:
+        print("[PROCESS] FILE VALIDATION FAILED")
+        print("[PROCESS] INVALID/CORRUPTED IMAGE")
+        doc.status = DocStatusEnum.FAILED.value
+        doc.processing_stage = "Failed"
+        doc.error_message = "Uploaded document is corrupted or invalid and cannot be processed."
+        db.commit()
+        raise HTTPException(status_code=400, detail="Uploaded document is corrupted or invalid and cannot be processed.")
+
+    print("[PROCESS] FILE VALIDATION START")
+    try:
+        PreprocessingService.validate_file_integrity(doc.file_path, doc.file_type)
+        print("[PROCESS] FILE VALIDATION SUCCESS")
+    except ValueError as val_err:
+        print("[PROCESS] FILE VALIDATION FAILED")
+        print("[PROCESS] INVALID/CORRUPTED IMAGE")
+        doc.status = DocStatusEnum.FAILED.value
+        doc.processing_stage = "Failed"
+        doc.error_message = str(val_err)
+        db.commit()
+        raise HTTPException(status_code=400, detail="Uploaded document is corrupted or invalid and cannot be processed.")
 
     try:
         # Stage 2: Preprocessing
@@ -124,23 +169,25 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
         doc.processing_stage = "2/7: Image Preprocessing"
         db.commit()
 
+        print("[PROCESS] PREPROCESSING START")
         processed_img_path = StorageService.get_processed_path(doc.filename)
         PreprocessingService.preprocess_document(doc.file_path, processed_img_path)
         doc.processed_path = processed_img_path
+        print("[PROCESS] PREPROCESSING COMPLETE")
 
         # Stage 3: OCR
         doc.status = DocStatusEnum.OCR.value
         doc.processing_stage = "3/7: Optical Character Recognition (OCR)"
         db.commit()
 
-        print(f"OCR STARTED")
+        print("[PROCESS] OCR START")
         ocr_service = OCRService()
         ocr_text, ocr_engine_used = ocr_service.extract_text(doc.file_path, processed_img_path, language=doc.language)
         ocr_save_path = StorageService.get_ocr_path(doc.filename)
         with open(ocr_save_path, "w", encoding="utf-8") as f:
             f.write(ocr_text)
         doc.ocr_path = ocr_save_path
-        print(f"OCR COMPLETED")
+        print("[PROCESS] OCR COMPLETE")
 
         AuditService.log_action(db, action="OCR_COMPLETED", entity="Document", entity_id=doc.id, user=current_user)
 
@@ -157,10 +204,10 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
         doc.processing_stage = "5/7: AI Field Extraction"
         db.commit()
 
-        print(f"EXTRACTION STARTED")
+        print("[PROCESS] EXTRACTION START")
         llm_service = LLMService.get_service()
         extracted_fields, extraction_source = llm_service.extract_fields(ocr_text, doc.document_type)
-        print(f"EXTRACTION COMPLETED")
+        print("[PROCESS] EXTRACTION COMPLETE")
 
         overall_conf, conf_level = ConfidenceService.calculate_confidence(extracted_fields)
 
@@ -183,18 +230,6 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
             ext_res.ocr_engine_used = ocr_engine_used
             ext_res.extraction_source = extraction_source
 
-        db_file_path = getattr(db.bind, 'url', None)
-        print(f"[PIPELINE DEBUG] DATABASE FILE USED: {db_file_path}")
-        print(f"[PIPELINE DEBUG] uploaded filename={doc.original_filename}")
-        print(f"[PIPELINE DEBUG] document_id={doc.id}")
-        print(f"[PIPELINE DEBUG] absolute file path being processed={os.path.abspath(doc.file_path)}")
-        print(f"[PIPELINE DEBUG] OCR engine used={ocr_engine_used}")
-        print(f"[PIPELINE DEBUG] first 1000 chars of OCR text={repr(ocr_text[:1000])}")
-        print(f"[PIPELINE DEBUG] extraction source={extraction_source}")
-        print(f"[PIPELINE DEBUG] extracted owner_name={extracted_fields.get('owner_name', {}).get('value')}")
-        print(f"[PIPELINE DEBUG] extracted survey_number={extracted_fields.get('survey_number', {}).get('value')}")
-        print(f"[PIPELINE DEBUG] saved extraction document_id={ext_res.document_id}")
-
         AuditService.log_action(db, action="RECORD_EXTRACTED", entity="Document", entity_id=doc.id, user=current_user)
 
         # Stage 6: Master Database & GIS Validation & Duplicate Check
@@ -202,8 +237,8 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
         doc.processing_stage = "6/7: Master DB & GIS Validation"
         db.commit()
 
+        print("[PROCESS] VALIDATION START")
         val_status, errors, warnings = ValidationService.validate_record(db, extracted_fields)
-        
         master_match_status, gis_match_status, field_comparison, m_id, m_parcel_id = MasterValidationService.validate_against_master_and_gis(db, extracted_fields)
 
         owner_name = extracted_fields.get("owner_name", {}).get("value")
@@ -260,6 +295,7 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
             val_res.gis_match_status = gis_match_status
             val_res.duplicate_status = duplicate_status
             val_res.field_comparison_details = field_comparison
+        print("[PROCESS] VALIDATION COMPLETE")
 
         # Create or update LandRecord
         land_rec = db.query(LandRecord).filter(LandRecord.document_id == doc.id).first()
@@ -307,8 +343,8 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
         doc.status = DocStatusEnum.COMPLETED.value
         doc.processing_stage = "7/7: Completed"
         db.commit()
-
-        print(f"PROCESSING COMPLETED")
+        print("[PROCESS] DATABASE UPDATE COMPLETE")
+        print("[PROCESS] ROUTE SUCCESS")
 
         return {
             "message": "Document processed successfully",
@@ -317,12 +353,31 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
             "confidence_score": overall_conf,
             "validation_status": val_status
         }
+    except ValueError as val_e:
+        print("[PROCESS] FILE VALIDATION FAILED")
+        print(f"[PROCESS] IMAGE DECODING FAILED: {val_e}")
+        try:
+            doc.status = DocStatusEnum.FAILED.value
+            doc.processing_stage = "Failed"
+            doc.error_message = str(val_e)
+            db.commit()
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail="Uploaded document is corrupted or invalid and cannot be processed.")
     except Exception as e:
-        doc.status = DocStatusEnum.FAILED.value
-        doc.processing_stage = "Failed"
-        doc.error_message = str(e)
-        db.commit()
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+        print(f"[PROCESS] FAILED: {e}")
+        try:
+            doc.status = DocStatusEnum.FAILED.value
+            doc.processing_stage = "Failed"
+            doc.error_message = "Document processing failed. Please try uploading the document again."
+            db.commit()
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=500,
+            detail="Document processing failed. Please try uploading the document again."
+        )
 
 @router.get("/{id}/extraction", response_model=ExtractionResponse)
 def get_extraction(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

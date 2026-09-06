@@ -150,3 +150,91 @@ def test_arun_kumar_document_upload_and_processing(client, db_session):
     assert fields["plot_area"] == 5.25
     assert fields["village"] == "Avinashi"
 
+def test_valid_jpeg_upload_and_processing(client, db_session):
+    login_res = client.post("/api/auth/login", json={"email": "admin@test.com", "password": "password123"})
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    img = Image.new("RGB", (800, 400), color="white")
+    draw = ImageDraw.Draw(img)
+    draw.text((40, 40), "Owner Name: Suresh\nSurvey Number: 501/2\nPlot Area: 1.80 Acres\nVillage: Annur", fill="black")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+
+    files = {"file": ("test_suresh_doc.jpg", io.BytesIO(buf.getvalue()), "image/jpeg")}
+    data = {"language": "English", "document_type": "Ownership Record"}
+
+    upload_res = client.post("/api/documents/upload", files=files, data=data, headers=headers)
+    assert upload_res.status_code == 200
+    doc_id = upload_res.json()["id"]
+
+    process_res = client.post(f"/api/documents/{doc_id}/process", headers=headers)
+    assert process_res.status_code == 200
+    assert process_res.json()["status"] == "COMPLETED"
+
+def test_valid_pdf_upload_and_processing(client, db_session):
+    import pymupdf
+    login_res = client.post("/api/auth/login", json={"email": "admin@test.com", "password": "password123"})
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((50, 50), "Owner Name: Rajesh\nSurvey Number: 302/1A\nPlot Area: 4.20 Acres\nVillage: Annur", fontsize=14)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    files = {"file": ("test_rajesh_doc.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
+    data = {"language": "English", "document_type": "Ownership Record"}
+
+    upload_res = client.post("/api/documents/upload", files=files, data=data, headers=headers)
+    assert upload_res.status_code == 200
+    doc_id = upload_res.json()["id"]
+
+    process_res = client.post(f"/api/documents/{doc_id}/process", headers=headers)
+    assert process_res.status_code == 200
+    assert process_res.json()["status"] == "COMPLETED"
+
+def test_corrupted_png_upload_handling(client, db_session):
+    login_res = client.post("/api/auth/login", json={"email": "admin@test.com", "password": "password123"})
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    corrupt_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRcorrupted_crc_header_data_block"
+    files = {"file": ("test_corrupt_doc.png", io.BytesIO(corrupt_bytes), "image/png")}
+    data = {"language": "English", "document_type": "Ownership Record"}
+
+    upload_res = client.post("/api/documents/upload", files=files, data=data, headers=headers)
+    assert upload_res.status_code == 400
+    assert "corrupted or invalid" in upload_res.json()["detail"].lower()
+
+def test_zero_byte_file_upload_handling(client, db_session):
+    login_res = client.post("/api/auth/login", json={"email": "admin@test.com", "password": "password123"})
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    files = {"file": ("empty_doc.png", io.BytesIO(b""), "image/png")}
+    data = {"language": "English", "document_type": "Ownership Record"}
+
+    upload_res = client.post("/api/documents/upload", files=files, data=data, headers=headers)
+    assert upload_res.status_code == 400
+    assert "empty" in upload_res.json()["detail"].lower()
+
+def test_unsupported_file_extension_handling(client, db_session):
+    login_res = client.post("/api/auth/login", json={"email": "admin@test.com", "password": "password123"})
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    files = {"file": ("doc.exe", io.BytesIO(b"binary_executable_data"), "application/octet-stream")}
+    data = {"language": "English", "document_type": "Ownership Record"}
+
+    upload_res = client.post("/api/documents/upload", files=files, data=data, headers=headers)
+    assert upload_res.status_code == 400
+    assert "unsupported file type" in upload_res.json()["detail"].lower()
+
+
