@@ -186,23 +186,25 @@ class RuleBasedExtractorService:
 
         # Village
         village, village_conf = find_match([
-            r"Village\s*(?:\([^\)]*\))?\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*\||\n|\r|$)",
-            r"கிராமம்\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*\||\n|\r|$)"
+            r"Village\s*(?:\([^\)]*\))?\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*[\|\/]\s*|\s+(?:Tehsil|Taluk|District)\b|\n|\r|$)",
+            r"கிராமம்\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*[\|\/]\s*|\s+(?:Tehsil|Taluk|District)\b|\n|\r|$)"
         ])
 
         # Tehsil
         tehsil, tehsil_conf = find_match([
-            r"(?:Tehsil|Taluk)\s*(?:\([^\)]*\))?\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*\||\n|\r|$)",
-            r"தாலுகா\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*\||\n|\r|$)"
+            r"(?:Tehsil|Taluk)\s*(?:\([^\)]*\))?\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*[\|\/]\s*|\s+(?:Village|District)\b|\n|\r|$)",
+            r"தாலுகா\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*[\|\/]\s*|\s+(?:Village|District)\b|\n|\r|$)"
         ])
 
         # District
         district, dist_conf = find_match([
-            r"(?:District|Dlelilct)\s*(?:\([^\)]*\))?\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*\||\n|\r|$)",
-            r"மாவட்டம்\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*\||\n|\r|$)"
+            r"(?:District|Dlelilct)\s*(?:\([^\)]*\))?\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*[\|\/]\s*|\s+(?:Tehsil|Taluk|Village)\b|\n|\r|$)",
+            r"மாவட்டம்\s*[:\=;\-]?\s*([A-Za-z0-9\sதமிழ்]+?)(?=\s*[\|\/]\s*|\s+(?:Tehsil|Taluk|Village)\b|\n|\r|$)"
         ])
-        if district and "chengal" in district.lower():
-            district = "Chengalpattu"
+        if district:
+            district = district.strip(" |/")
+            if "chengal" in district.lower():
+                district = "Chengalpattu"
 
         # Land Classification
         classification, class_conf = find_match([
