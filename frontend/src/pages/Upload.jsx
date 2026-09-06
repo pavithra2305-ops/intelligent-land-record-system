@@ -74,7 +74,25 @@ export const Upload = () => {
       setProcessingStage(3);
 
       // Trigger live backend processing endpoint
-      const processRes = await api.post(`/documents/${docData.id}/process`);
+      const documentId = docData.id;
+      const baseURL = api.defaults.baseURL || '/api';
+      const endpoint = `/documents/${documentId}/process`;
+      const url = baseURL.endsWith('/') ? `${baseURL.slice(0, -1)}${endpoint}` : `${baseURL}${endpoint}`;
+      const token = localStorage.getItem('token');
+
+      console.log("PROCESS START", documentId);
+      console.log("PROCESS URL", url);
+      console.log("PROCESS TOKEN EXISTS", !!token);
+
+      console.log("PROCESS REQUEST SENT");
+      const processRes = await api.post(`/documents/${documentId}/process`, {}, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      console.log("PROCESS RESPONSE STATUS", processRes.status);
+      console.log("PROCESS RESPONSE BODY", processRes.data);
+
       setProcessingStage(7);
       setProcessingStatus('COMPLETED');
       toast.success('Document digitized and validated successfully!');
@@ -82,6 +100,7 @@ export const Upload = () => {
       navigate(`/documents/${docData.id}`);
 
     } catch (err) {
+      console.log("PROCESS CAUGHT ERROR", err?.response?.status, err?.response?.data || err?.message || err);
       setProcessingStatus('FAILED');
       const msg = err.response?.data?.detail || 'Document processing failed';
       setErrorMessage(msg);
