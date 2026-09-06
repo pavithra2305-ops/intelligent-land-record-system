@@ -32,71 +32,27 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:8000",
 ]
 
-# Standard CORSMiddleware
+# Single, clean CORSMiddleware configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
 )
-
-# Custom CORS middleware wrapper ensuring CORS headers on ALL requests, OPTIONS preflights, and errors
-@app.middleware("http")
-async def ensure_cors_headers(request: Request, call_next):
-    origin = request.headers.get("origin")
-    
-    # Handle preflight OPTIONS explicitly if origin matches
-    if request.method == "OPTIONS" and origin:
-        if origin in ALLOWED_ORIGINS or origin.endswith(".vercel.app") or "localhost" in origin or "127.0.0.1" in origin:
-            response = JSONResponse(status_code=200, content={"status": "ok"})
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD"
-            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, X-Requested-With"
-            return response
-
-    try:
-        response = await call_next(request)
-    except Exception as exc:
-        print(f"[CORS MIDDLEWARE ERROR CATCH] {request.method} {request.url} - {exc}")
-        response = JSONResponse(
-            status_code=500,
-            content={"detail": f"Processing error: {str(exc)}"}
-        )
-
-    if origin:
-        if origin in ALLOWED_ORIGINS or origin.endswith(".vercel.app") or "localhost" in origin or "127.0.0.1" in origin:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD"
-            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, X-Requested-With"
-
-    return response
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     print(f"[GLOBAL EXCEPTION HANDLER] {request.method} {request.url} - Exception: {exc}")
-    origin = request.headers.get("origin")
-    headers = {}
-    if origin:
-        headers["Access-Control-Allow-Origin"] = origin
-        headers["Access-Control-Allow-Credentials"] = "true"
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Processing error: {str(exc)}"},
-        headers=headers
+        content={"detail": f"Processing error: {str(exc)}"}
     )
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    origin = request.headers.get("origin")
     headers = dict(exc.headers) if exc.headers else {}
-    if origin:
-        headers["Access-Control-Allow-Origin"] = origin
-        headers["Access-Control-Allow-Credentials"] = "true"
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},

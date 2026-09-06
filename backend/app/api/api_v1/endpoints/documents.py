@@ -109,6 +109,11 @@ def get_document(id: int, db: Session = Depends(get_db), current_user: User = De
 
 @router.post("/{id}/process")
 def process_document(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    print(f"PROCESS ROUTE START")
+    print(f"DOCUMENT ID: {id}")
+    print(f"USER: {current_user.email if current_user else 'Unknown'}")
+    print(f"PROCESSING STARTED")
+
     doc = db.query(Document).filter(Document.id == id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -128,12 +133,14 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
         doc.processing_stage = "3/7: Optical Character Recognition (OCR)"
         db.commit()
 
+        print(f"OCR STARTED")
         ocr_service = OCRService()
         ocr_text, ocr_engine_used = ocr_service.extract_text(doc.file_path, processed_img_path, language=doc.language)
         ocr_save_path = StorageService.get_ocr_path(doc.filename)
         with open(ocr_save_path, "w", encoding="utf-8") as f:
             f.write(ocr_text)
         doc.ocr_path = ocr_save_path
+        print(f"OCR COMPLETED")
 
         AuditService.log_action(db, action="OCR_COMPLETED", entity="Document", entity_id=doc.id, user=current_user)
 
@@ -150,8 +157,10 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
         doc.processing_stage = "5/7: AI Field Extraction"
         db.commit()
 
+        print(f"EXTRACTION STARTED")
         llm_service = LLMService.get_service()
         extracted_fields, extraction_source = llm_service.extract_fields(ocr_text, doc.document_type)
+        print(f"EXTRACTION COMPLETED")
 
         overall_conf, conf_level = ConfidenceService.calculate_confidence(extracted_fields)
 
@@ -298,6 +307,8 @@ def process_document(id: int, db: Session = Depends(get_db), current_user: User 
         doc.status = DocStatusEnum.COMPLETED.value
         doc.processing_stage = "7/7: Completed"
         db.commit()
+
+        print(f"PROCESSING COMPLETED")
 
         return {
             "message": "Document processed successfully",
