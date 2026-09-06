@@ -1,7 +1,11 @@
 import axios from 'axios';
 
+const defaultBaseURL = import.meta.env.DEV
+  ? '/api'
+  : 'https://intelligent-land-record-api.onrender.com/api';
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || defaultBaseURL,
   headers: {
     'Content-Type': 'application/json',
   },

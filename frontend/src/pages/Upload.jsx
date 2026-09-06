@@ -80,18 +80,18 @@ export const Upload = () => {
       const url = baseURL.endsWith('/') ? `${baseURL.slice(0, -1)}${endpoint}` : `${baseURL}${endpoint}`;
       const token = localStorage.getItem('token');
 
-      console.log("PROCESS START", documentId);
-      console.log("PROCESS URL", url);
-      console.log("PROCESS TOKEN EXISTS", !!token);
+      console.log("[PROCESS] START", documentId);
+      console.log("[PROCESS] API URL", url);
+      console.log("[PROCESS] TOKEN EXISTS", Boolean(token));
+      console.log("[PROCESS] TOKEN LENGTH", token ? token.length : 0);
 
-      console.log("PROCESS REQUEST SENT");
       const processRes = await api.post(`/documents/${documentId}/process`, {}, {
         headers: {
           'Content-Type': 'application/json'
         }
       });
-      console.log("PROCESS RESPONSE STATUS", processRes.status);
-      console.log("PROCESS RESPONSE BODY", processRes.data);
+      console.log("[PROCESS] RESPONSE STATUS", processRes.status);
+      console.log("[PROCESS] RESPONSE DATA", processRes.data);
 
       setProcessingStage(7);
       setProcessingStatus('COMPLETED');
@@ -100,9 +100,39 @@ export const Upload = () => {
       navigate(`/documents/${docData.id}`);
 
     } catch (err) {
-      console.log("PROCESS CAUGHT ERROR", err?.response?.status, err?.response?.data || err?.message || err);
+      console.error("[PROCESS] ERROR MESSAGE", err.message);
+      console.error("[PROCESS] ERROR CODE", err.code);
+      console.error("[PROCESS] ERROR STATUS", err.response?.status);
+      console.error("[PROCESS] ERROR DATA", err.response?.data);
+      console.error("[PROCESS] ERROR HEADERS", err.response?.headers);
+
       setProcessingStatus('FAILED');
-      const msg = err.response?.data?.detail || 'Document processing failed';
+
+      let detailStr = '';
+      if (err.response?.data?.detail) {
+        const detail = err.response.data.detail;
+        if (typeof detail === 'string') {
+          detailStr = detail;
+        } else if (typeof detail === 'object' && detail !== null) {
+          if (Array.isArray(detail)) {
+            detailStr = detail.map(d => d.msg || JSON.stringify(d)).join(', ');
+          } else {
+            detailStr = detail.error || detail.message || JSON.stringify(detail);
+          }
+        }
+      } else if (err.response?.data?.message) {
+        detailStr = err.response.data.message;
+      } else if (err.response?.status) {
+        detailStr = `HTTP ${err.response.status}`;
+      } else if (err.message) {
+        detailStr = err.message;
+      } else {
+        detailStr = 'Document processing failed';
+      }
+
+      const statusPrefix = err.response?.status ? `HTTP ${err.response.status} - ` : '';
+      const msg = `Document processing failed: ${statusPrefix}${detailStr}`;
+
       setErrorMessage(msg);
       toast.error(msg);
     } finally {
